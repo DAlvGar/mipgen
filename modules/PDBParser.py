@@ -23,7 +23,7 @@ def readResAtCoordFromPDB(pdbFile):
             res = l[17:20].strip()
             
             # COORDINATES // 31-54 cols
-            xyz = map(float, l[30:54].split())
+            xyz = list(map(float, l[30:54].split()))
             pdb.append([res,at]+xyz)
             
         l = f.readline()
@@ -32,4 +32,4 @@ def readResAtCoordFromPDB(pdbFile):
 
 if __name__ == "__main__":
     import sys
-    print readResAtCoordFromPDB(sys.argv[1])
+    print(readResAtCoordFromPDB(sys.argv[1]))

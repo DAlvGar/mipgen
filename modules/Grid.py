@@ -96,17 +96,17 @@ class Grid:
         
         # Constructor method 2
         elif shape is not None or size is not None and not file:
-            if isinstance(origin, list) or isinstance(origin, tuple): self.origin = map(float, origin)
-            else: print "ERROR. Wrong format for origin parameter"
+            if isinstance(origin, list) or isinstance(origin, tuple): self.origin = list(map(float, origin))
+            else: print("ERROR. Wrong format for origin parameter")
 
-            if isinstance(spacing, float) or isinstance(spacing, int): self.delta = map(float, [spacing, spacing, spacing])
-            elif isinstance(spacing, list): self.delta = map(float, spacing)
-            else: print "ERROR. Wrong format for spacing parameter"
+            if isinstance(spacing, float) or isinstance(spacing, int): self.delta = list(map(float, [spacing, spacing, spacing]))
+            elif isinstance(spacing, list): self.delta = list(map(float, spacing))
+            else: print("ERROR. Wrong format for spacing parameter")
 
             # Size or shape to
             # create numpy array in data
             if size is not None:
-                shape = npy.round(npy.array(size) / self.delta)
+                shape = npy.round(npy.array(size) / self.delta).astype(int)
 
             self.data = npy.zeros(shape)
             self.data += value
@@ -335,7 +335,7 @@ class Grid:
 
 
 def error(message):
-    print >> sys.stderr, "ERROR: ",message
+    print("ERROR: ",message)
 
 def readBlock(fh, size, dType):
     s = npy.fromstring(fh.read(size),sep=" ",dtype=dType)
@@ -399,7 +399,7 @@ def createAroundMolecule(molecule, spacing, buffer):
         if molecule.shape[1] == 3:
             xyz = molecule
         else:
-            print "(createAroundMolecule) ERROR with npy.ndarray shape. Shape:",molecule.shape
+            print("(createAroundMolecule) ERROR with npy.ndarray shape. Shape:",molecule.shape)
     else:
         xyz = coordsFromMolec(molecule)
 
