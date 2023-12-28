@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 
 Author: Daniel Alvarez (algarcia.daniel@gmail.com)
-Last revision date: 28-03-2011
+Last revision date: 28-12-2023
 
 
 
@@ -51,7 +51,7 @@ This software is released under the GNU General Public License (GPL).
 
 2.1 - DEPENDENCIES
 
-    The program is written and tested in Python 2.6. Newer versions should be 
+    The program was ported to Python 3 in DEC 2023. Newer versions should be 
     also stable although no test was performed. Older python versions might
     present some errors.
 
@@ -340,4 +340,6 @@ A nice image should appear on the main window displaying both potentials.
 - Allow the user to provide parameters for the 'missing atoms'.
 - Include more precise calculations apart from electrostatics and vanderwaals.
 
-
+6. CHANGELOG
+-------------
+- 12/2023: Use of KDTrees to significantly speed up calculations.
