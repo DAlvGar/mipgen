@@ -166,8 +166,8 @@ class AmberMolecule:
         row=c.fetchall()
         if len(row) != 1:
             # No results
-            print 'ATTENTION! Missing atom:'
-            print "At:",atname,resname,attype
+            print('ATTENTION! Missing atom:')
+            print("At:",atname,resname,attype)
             return 'miss',resname,atname
         else:
             # Correct fetching
@@ -223,7 +223,7 @@ class AmberMolecule:
             if p[0] != 'miss': params.append(list(p)[4:])
             else: miss.append(p[1:])
         conn.close()
-#        print params
+#        print(params
         # Return a list Charge,VdWRadii,Eps
         return params, miss
 
@@ -235,7 +235,7 @@ class AmberMolecule:
         prepin = splitext(split(pdbFile)[1])[0] + '.prep'
         ante_cmd = "antechamber -i %s -fi pdb -o %s -fo prepi -c bcc -pf y"%(pdbin,prepin)
 
-        print "Running antechamber to calculate charges and assign atomtypes..."
+        print("Running antechamber to calculate charges and assign atomtypes...")
         if not exists(prepin):
             antechamber = sub.Popen(ante_cmd, shell=True, stdout=sub.PIPE, stderr=sub.PIPE)
             antechamber.wait()
@@ -244,10 +244,10 @@ class AmberMolecule:
         if exists(prepin):
             molec = readAmberPrep(prepin)
             # Will return only first residue as it should only contain 1 :)
-            return molec[molec.keys()[0]]
+            return molec[list(molec.keys())[0]]
         else:
-            print antechamber.stdout.read()
-            print antechamber.stderr.read()
+            print(antechamber.stdout.read())
+            print(antechamber.stderr.read())
             return None
 
 
@@ -259,4 +259,4 @@ if __name__ == "__main__":
     import sys
     molec = readAmberPrep(sys.argv[1])
     for res in molec.keys():
-        print res, molec[res]
+        print(res, molec[res])

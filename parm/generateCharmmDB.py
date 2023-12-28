@@ -45,7 +45,7 @@ while(l):
         if 'RESI' in l or 'PRES' in l:
                 ats = []
                 res = l.split()[1]
-                print "inserting ",res
+                print("inserting ",res)
                 while bool(l.strip()):
                         l = f.readline()
                         if atmatch.match(l):
@@ -78,4 +78,4 @@ c.executemany("UPDATE residues SET radii=?, eps=? WHERE attype=?",t)
 conn.commit()
 
 conn.close()
-print "DONE"
+print("DONE")

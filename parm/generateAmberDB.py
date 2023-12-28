@@ -61,7 +61,7 @@ def parseLibFile(file):
     res_dict = readAmberPrep(file)
     # Add residues, atom names, atomtypes and charges to the DB
     for res in res_dict.keys():
-        print "Parsing: ",res
+        print("Parsing: ",res)
         [insertAt(res,at[0],at[1],at[2]) for at in res_dict[res]]
         
     return True
@@ -120,4 +120,4 @@ if __name__ == "__main__":
     # Close connections to the DB
     # and we are done!
     conn.close()
-    print "DONE"
+    print("DONE")

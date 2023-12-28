@@ -60,4 +60,4 @@ if __name__ == "__main__":
     # Close connections to the DB
     # and we are done!
     conn.close()
-    print "DONE"
+    print("DONE")
