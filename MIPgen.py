@@ -11,6 +11,7 @@ import os
 import string
 from optparse import OptionParser
 from scipy.spatial import KDTree
+from modules.RDKit import count_molecules_in_sdf
 
 def defineParser():
     " Define the Option parser"
@@ -20,6 +21,8 @@ def defineParser():
             help="Protein file (PDB format)")
     parser.add_option("-m","--molec",dest="molec", default=False,
             help="Molecule file (PDB format)")
+    parser.add_option("-s","--sdf",dest="molec_sdf", default=False,
+            help="Molecule or multiple molecules file (SDF format)")
     parser.add_option("-r", "--probe",dest="probes",action="append",
             help="Append probe names to calculate the MIPs. This flag can be used\
              more than once.")
@@ -36,6 +39,14 @@ def defineParser():
             help="VdW calculations Cutoff (float). Default: 10A")
     parser.add_option("-e","--elec",dest="elec",type="float",default=20.,
             help="Electrostatic calculations cutoff (float). Default: 20A")
+    parser.add_option("-g",dest="grid_spacing",type="float",default=1.,
+            help="Grid spacing. Default 1A.")
+    parser.add_option("-b",dest="grid_buffer",type="float",default=6.,
+            help="Distance from the molecule to the grid edge (buffer). Default: 6A")
+    parser.add_option("-c",dest="charge",type="int",default=0,
+            help="Molecule net charge. Default 0. Adjust for charged molecules.")
+    parser.add_option("-q",dest="charge_method",type="str",default="bcc",
+            help="Molecule charge method from antechamber list: default bcc. Other: mul")
     parser.add_option("-l","--list",default=False, action="store_true", dest="list",
             help="List available probes")
 
@@ -190,6 +201,7 @@ if __name__ == "__main__":
         
     # Output name
     outprefix = options.out
+    charge_method = options.charge_method
     
     # Parse VdW and Elec options
     vdw_cutoff = options.vdw
@@ -201,72 +213,83 @@ if __name__ == "__main__":
     # They will be treated differently when assigning atom types
     if options.molec and options.prot:
         parser.error("Protein and Molecule options are exclusive. To get some help type -h or --help.")
+    elif options.molec and options.molec_sdf:
+        parser.error("Molecule PDB and Molecule SDF options are exclusive. To get some help type -h or --help.")
     elif options.molec:
-        pdbfile = os.path.exists(options.molec) and options.molec or False
+        inputFile = os.path.exists(options.molec) and options.molec or False
+        mode = "gaff"
+    elif options.molec_sdf:
+        inputFile = os.path.exists(options.molec_sdf) and options.molec_sdf or False
         mode = "gaff"
     elif options.prot:
-        pdbfile = os.path.exists(options.prot) and options.prot or False
+        inputFile = os.path.exists(options.prot) and options.prot or False
         mode = "parm"
     else:
         parser.error("Either Protein or Molecule have to be given. To get some help type -h or --help.")
 
-    if not pdbfile: parser.error("Path to PDB does not exists.")
+    if not inputFile: parser.error("Path to input file does not exists.")
     
     # Check that all the probes chosen are defined
     probes = options.probes
     [parser.error("Error in probe name %s. Check manual for available probes."%p)
         for p in probes if p not in probeparms.keys()]
     
+    n_molecules = 1
+    if options.molec_sdf: n_molecules = count_molecules_in_sdf(options.molec_sdf)
+
     # Obtain parameters
-    print("Obtaining parameters...")
-    molecule = AmberMolecule(pdbfile,mode)
-    kd_mol = KDTree(molecule.xyz)
-    
-    # Build a grid over the molecule
-    print("Building grid over the molecule...")
-    grid = gr.createAroundMolecule(molecule.xyz, 1., 4.)
-    si,sj,sk = grid.shape
-    size = grid.data.size
-    mol_atoms =  npy.array(molecule.atoms)
-
-    for probe in probes:
-        print("\t+ Running probe: ",probe)
-        params = probeparms[probe]
-        grid.data *= 0  # Reset data to zeros
+    for i_mol in range(n_molecules):
+        molecule = AmberMolecule(inputFile,mode,options.charge, i_mol, charge_method=charge_method)
+        if n_molecules > 1: mol_prefix = outprefix+'_'+str(i_mol)
+        else: mol_prefix = outprefix
         
-        n = 0
-        for i in range(si):
-            for j in range(sj):
-                for k in range(sk):
-                    n += 1
-                    s = (float(n) / size)*100
-                    if s in range(0,100,10):
-                        print("%.2f %%\r"%(s))
-                    xyz = grid.toCartesian((i,j,k))
-                    probe_pos = params+xyz.tolist()
+        # Build a grid over the molecule
+        print(f'Building grid over the molecule {i_mol}...')
+        grid = gr.createAroundMolecule(molecule.xyz, options.grid_spacing, options.grid_buffer)
+        si,sj,sk = grid.shape
+        size = grid.data.size
 
-                    # get neighbours under elec cutoff of 20
-                    nhood_ix = npy.array(kd_mol.query_ball_point(xyz, 20)) # 20 angstroms
-                    if not len(nhood_ix): continue
-                    
-                    nhood_xyz = molecule.xyz[nhood_ix,:]
-                    nhood_r = distanceMat(nhood_xyz, xyz)
-                    
-                    elec = calcElecNHOOD(probe_pos, [mol_atoms[nhood_ix][:,0], nhood_r], diel_const)
-                    
-                    # get index of atoms of interest for vdw calculation
-                    # those under vdw cutoff of 10.
-                    mask_vdw = nhood_r < 10.
-                    vdw = 0
-                    if npy.any(mask_vdw):
-                        vdwix = nhood_ix[mask_vdw] 
-                        vdwr = nhood_r[mask_vdw]
-                        vdwat = mol_atoms[vdwix]
-                        vdw = calcVdWNHOOD(probe_pos, [vdwat, vdwr])
+        # Build a KDTree for closest atoms quick search
+        kd_mol = KDTree(molecule.xyz)
+        mol_atoms =  npy.array(molecule.atoms)
+        for probe in probes:
+            print("\t+ Running probe: ",probe)
+            params = probeparms[probe]
+            grid.data *= 0  # Reset data to zeros
+            
+            n = 0
+            for i in range(si):
+                for j in range(sj):
+                    for k in range(sk):
+                        n += 1
+                        s = (float(n) / size)*100
+                        if s in range(0,100,10):
+                            print("%.2f %%\r"%(s))
+                        xyz = grid.toCartesian((i,j,k))
+                        probe_pos = params+xyz.tolist()
+
+                        # get neighbours under elec cutoff of 20
+                        nhood_ix = npy.array(kd_mol.query_ball_point(xyz, 20)) # 20 angstroms
+                        if not len(nhood_ix): continue
                         
-                    grid.data[i,j,k] = vdw + elec
-                    
-        grid.writeDX(outprefix+'_%s.dx'%probe)
+                        nhood_xyz = molecule.xyz[nhood_ix,:]
+                        nhood_r = distanceMat(nhood_xyz, xyz)
+                        
+                        elec = calcElecNHOOD(probe_pos, [mol_atoms[nhood_ix][:,0], nhood_r], diel_const)
+                        
+                        # get index of atoms of interest for vdw calculation
+                        # those under vdw cutoff of 10.
+                        mask_vdw = nhood_r < 10.
+                        vdw = 0
+                        if npy.any(mask_vdw):
+                            vdwix = nhood_ix[mask_vdw] 
+                            vdwr = nhood_r[mask_vdw]
+                            vdwat = mol_atoms[vdwix]
+                            vdw = calcVdWNHOOD(probe_pos, [vdwat, vdwr])
+                            
+                        grid.data[i,j,k] = vdw + elec
+                        
+            grid.writeDX(mol_prefix+'_%s.dx'%probe)
 
     print()
     print("DONE")

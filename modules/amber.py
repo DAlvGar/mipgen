@@ -5,14 +5,47 @@ __author__="dalvarez"
 __date__ ="$18-feb-2011 0:14:26$"
 
 import re
+import os
 import sqlite3
 import subprocess as sub
 from os.path import split, splitext, exists
 import numpy as npy
+from modules.RDKit import extract_atom_info_from_conformer, write_specific_molecule_to_sdf
+
+def parse_mol2_file(file_path):
+    atomic_info = []
+    reading_atoms = False
+    mol_name = 'MOL'
+    with open(file_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if line.startswith('@<TRIPOS>ATOM'):
+                reading_atoms = True
+                continue
+            elif line.startswith('@<TRIPOS>'):
+                reading_atoms = False
+
+            if reading_atoms and line:
+                parts = line.split()
+                atom_data = [
+                    parts[1], #'atom_name'
+                    parts[5], # 'atom_type'
+                    float(parts[8]), #'charge'
+                    float(parts[2]), #'x': 
+                    float(parts[3]), #'y': 
+                    float(parts[4]), #'z': 
+                    parts[7] #'residue': 
+                ]
+                
+                atomic_info.append(atom_data)
+
+    return {mol_name:atomic_info}
 
 def readAmberPrep(prepfile):
-    "Read an Amber prepin file and return the residues, atom names, atom types,\
-    and charges for each atom in a dictionary {RESNAME:[[atname1,attype1,charge1], [..],..], ...}"
+    """
+    Read an Amber prepin file and return the residues, atom names, atom types,\
+    and charges for each atom in a dictionary {RESNAME:[[atname1,attype1,charge1], [..],..], ...}
+    """
     res = re.compile(r'\w+\s+INT\s+')       # Begin of a residue in the prepin file
     molec = {}
 
@@ -73,21 +106,23 @@ class AmberMolecule:
     If the molecule is a small organic compound, antechamber is run to calculate partial charges,
     then GAFF ForceField atomtypes are assigned.
     """
-    def __init__(self, pdbFile, mode):
+    def __init__(self, inFile, mode, charge=0, mol_ix=0, charge_method='bcc'):
         """Build an instance for the molecule containing
         for each atom, the coordinates and non-bonded parameters
         (mass, charge, vdw radii and epsilon)
 
-        Input:  atom_names - string with names as in PDB
-                xyz - numpy.ndarray with the coordinates
+        Input:  inFile - PDB file or SDF file
+                mode - 'gaff' or 'parm'
+                charge - net charge
+                mol_ix - from the sdf, which molecule to read
         """
         
-        self.atoms = self.__getParamsXYZ(pdbFile, mode)
+        self.atoms = self.__getParamsXYZ(inFile, mode, charge, mol_ix, charge_method)
         self.natoms = len(self.atoms)
         self.xyz = npy.array([at[3:] for at in self.atoms])
 
 
-    def __getParamsXYZ(self, pdbFile, mode):
+    def __getParamsXYZ(self, inputFile, mode, charge=0, mol_ix=0, charge_method='bcc'):
         """
         Obtain for each atom the correspondent parameters for
         Vander Waals and Coulomb calculations along with their coordinates.
@@ -101,6 +136,8 @@ class AmberMolecule:
         Mode = 'gaff'   --> Organic molecule. Treat with antechamber.
         Mode = 'parm'   --> Protein. Treat with tLeap and then assign Amber FF params.
 
+        charge = 0      --> Molecule net charge, default is zero.
+
         The function returns a list with this format:
         [[charge, vdw, eps, x, y, z],[..],..]
         """
@@ -110,31 +147,28 @@ class AmberMolecule:
         # have different occupancies and/or extrange names. This will filter a bit
         # this abnormalities
         if mode == 'parm':
-            pdb = self.__fixPDBtLeap(pdbFile)
-            if pdb: pdbFile = pdb
+            pdb = self.__fixPDBtLeap(inputFile)
+            if pdb: inputFile = pdb
             else: pass # Will continue without pre-process and good luck!
 
         # GAFF is used for organic molecules. Antechamber is used to prepare them.
         # PARM99 is used for proteins. Parameters are obtained from amber.db
         if mode == 'gaff':
             # First obtain atom types and charges
-            types_charges = self.__gaffParams(pdbFile)
-            res_at_xyz = self.__getAtsXYZ(pdbFile)
-
-            # Atoms in types_charges don't have the same order as in the PDB file
-            # we have to match atom indices with the coordinates
-            at_xyz_dict = dict(zip([at[1] for at in res_at_xyz],[at[2:] for at in res_at_xyz]))
-            xyz = [at_xyz_dict[at[0]] for at in types_charges]
+            types_charges_xyz = self.__gaffParams(inputFile, charge, mol_ix, charge_method)
+            if types_charges_xyz is None:
+                raise RuntimeError("Antechamber calcualtion failed")
+            # res_at_xyz = self.__getAtsXYZ(inputFile, mol_ix)
+            xyz = [[at[3],at[4],at[5]] for at in types_charges_xyz]
 
             # Assign corresponding VdW parameters using gaff.db
-            params = self.__addVdWtoGaff(types_charges)
-
+            params = self.__addVdWtoGaff(types_charges_xyz)
             return [params[i]+xyz[i] for i in range(len(params))]
 
         elif mode == 'parm':
             # First extract from the PDB the coordinates, atom names and residue
             # name for each atom
-            res_at_xyz = self.__getAtsXYZ(pdbFile)
+            res_at_xyz = self.__getAtsXYZ(inputFile)
             res_at = [[at[0],at[1]] for at in res_at_xyz]
             params, miss = self.__amberParams(res_at)
             xyz = [at[2:] for at in res_at_xyz if at[0:2] not in miss]
@@ -186,13 +220,13 @@ class AmberMolecule:
         return [[float(types_charges[i][2])]+list(vdw[i]) for i in range(len(types_charges))]
 
 
-    def __fixPDBtLeap(self, pdbFile):
+    def __fixPDBtLeap(self, inputFile):
         "Pre-process PDB using AmberTools software. Just load it and save it again.\
         It will change some atom names and some residues hopefully fixing some strange things.\
         Will also add missing Hydrognes."
-        outname = pdbFile.replace('.','_tleap.')
+        outname = inputFile.replace('.','_tleap.')
         tleap = Leaper()
-        tleap.command('p = loadPdb %s'%pdbFile)
+        tleap.command('p = loadPdb %s'%inputFile)
         tleap.command('savePdb p %s'%outname)
         tleap.close()
 
@@ -201,12 +235,15 @@ class AmberMolecule:
         else:
             return False
 
-    def __getAtsXYZ(self,pdbFile):
+    def __getAtsXYZ(self,inputFile,mol_ix=0):
         "Given a pdb file, return the list of residue names and atoms names for each atom."
-        from modules.PDBParser import readResAtCoordFromPDB
-        molec = readResAtCoordFromPDB(pdbFile)
+        if '.sd' in splitext(inputFile)[1]:
+            # Not PDB, treat as SDF file
+            molec = extract_atom_info_from_conformer(inputFile, mol_ix, 0) # first molecule, first conformer
+        else:
+            from modules.PDBParser import readResAtCoordFromPDB
+            molec = readResAtCoordFromPDB(inputFile)
         return molec
-
 
     def __amberParams(self, res_at):
         """Returns for each pair residue_atomname a tuple (charge, radii, epsilon)
@@ -227,23 +264,34 @@ class AmberMolecule:
         # Return a list Charge,VdWRadii,Eps
         return params, miss
 
-    def __gaffParams(self, pdbFile):
+    def __gaffParams(self, molFile, charge=0, mol_ix=0, charge_method='bcc'):
         """Returns for each atom in pdbInstance a tuple (charge, radii, epsilon, x, y, z)
         Using Amber GAFF FF."""
+        basename, ext = splitext(molFile)
+        outfile = None
+        if 'sd' in ext: 
+            ext = 'mdl' # sdf is mdl format in antechamber
+            outfile = basename +'_'+ str(mol_ix) +'.sd'
+            write_specific_molecule_to_sdf(molFile, outfile, mol_ix)
+            molFile = outfile
+            mol2 = basename +'_'+ str(mol_ix) +'.mol2'
+        elif 'pdb' in ext or 'ent' in ext: 
+            ext = 'pdb'
+            mol2 = basename+'.prep'
+        else: raise TypeError
+        ante_cmd = "antechamber -i %s -fi %s -o %s -fo mol2 -c %s -pf y -nc %i"%(molFile, ext, mol2, charge_method, charge)
 
-        pdbin = pdbFile
-        prepin = splitext(split(pdbFile)[1])[0] + '.prep'
-        ante_cmd = "antechamber -i %s -fi pdb -o %s -fo prepi -c bcc -pf y"%(pdbin,prepin)
-
-        print("Running antechamber to calculate charges and assign atomtypes...")
-        if not exists(prepin):
+        print(f"Running antechamber to calculate charges and assign atomtypes {mol_ix}...")
+        if not exists(mol2):
             antechamber = sub.Popen(ante_cmd, shell=True, stdout=sub.PIPE, stderr=sub.PIPE)
             antechamber.wait()
 #            antechamber.terminate()
 
-        if exists(prepin):
-            molec = readAmberPrep(prepin)
+        if exists(mol2):
+            #molec = readAmberPrep(mol2)
+            molec = parse_mol2_file(mol2)
             # Will return only first residue as it should only contain 1 :)
+            if outfile: os.remove(outfile) # no need to keep it
             return molec[list(molec.keys())[0]]
         else:
             print(antechamber.stdout.read())
